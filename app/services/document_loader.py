@@ -1,6 +1,6 @@
-import os
 from pathlib import Path
 
+import anyio
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
 
@@ -29,16 +29,14 @@ async def load_document(file_path: str) -> list[Document]:
     """
     path = Path(file_path)
 
-    if not path.exists():
+    if not await anyio.Path(file_path).exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
     extension = path.suffix.lower()
 
     if extension not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(SUPPORTED_EXTENSIONS.keys())
-        raise ValueError(
-            f"Unsupported file extension '{extension}'. Supported: {supported}"
-        )
+        raise ValueError(f"Unsupported file extension '{extension}'. Supported: {supported}")
 
     loader_class = SUPPORTED_EXTENSIONS[extension]
     loader = loader_class(str(path))

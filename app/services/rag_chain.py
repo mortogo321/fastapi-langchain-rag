@@ -6,7 +6,8 @@ from app.config import Settings
 from app.services.vector_store import VectorStoreService
 
 RAG_PROMPT_TEMPLATE = """Use the following pieces of context to answer the question at the end.
-If the context does not contain enough information to answer the question, say "I don't have enough information in the provided documents to answer this question."
+If the context does not contain enough information to answer the question, say "I don't have \
+enough information in the provided documents to answer this question."
 Do not make up information that is not supported by the context.
 
 Context:

@@ -1,12 +1,13 @@
 import os
 import tempfile
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
+import anyio
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.models.schemas import HealthResponse, IngestResponse, QueryRequest, QueryResponse
 from app.services.document_loader import load_document
 from app.services.rag_chain import RAGService
@@ -117,7 +118,8 @@ async def ingest_document(file: UploadFile) -> IngestResponse:
         for chunk in chunks:
             chunk.metadata["source"] = file.filename
             if "page" in chunk.metadata:
-                chunk.metadata["source_detail"] = f"{file.filename} (page {chunk.metadata['page'] + 1})"
+                page_num = chunk.metadata["page"] + 1
+                chunk.metadata["source_detail"] = f"{file.filename} (page {page_num})"
             else:
                 chunk.metadata["source_detail"] = file.filename
 
@@ -132,18 +134,18 @@ async def ingest_document(file: UploadFile) -> IngestResponse:
     except HTTPException:
         raise
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"An error occurred during ingestion: {exc}",
-        )
+        ) from exc
     finally:
         # Clean up temp file
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path and await anyio.Path(tmp_path).exists():
+            await anyio.Path(tmp_path).unlink()
 
 
 @app.post("/api/query", response_model=QueryResponse)
@@ -168,4 +170,4 @@ async def query_documents(request: QueryRequest) -> QueryResponse:
         raise HTTPException(
             status_code=500,
             detail=f"An error occurred during query processing: {exc}",
-        )
+        ) from exc
