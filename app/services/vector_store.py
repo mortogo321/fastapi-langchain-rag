@@ -1,5 +1,6 @@
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_openai import OpenAIEmbeddings
 
 from app.config import Settings
@@ -25,9 +26,13 @@ class VectorStoreService:
         )
 
     @property
-    def retriever(self):
+    def retriever(self) -> VectorStoreRetriever:
         """Expose the underlying vector store as a LangChain retriever."""
         return self._store.as_retriever()
+
+    def retriever_with_k(self, k: int) -> VectorStoreRetriever:
+        """Return a retriever scoped to top-k results without mutating shared state."""
+        return self._store.as_retriever(search_kwargs={"k": k})
 
     def add_documents(self, documents: list[Document]) -> list[str]:
         """
@@ -39,7 +44,7 @@ class VectorStoreService:
         Returns:
             List of document IDs assigned by ChromaDB.
         """
-        ids = self._store.add_documents(documents)
+        ids: list[str] = self._store.add_documents(documents)
         return ids
 
     def similarity_search(self, query: str, k: int = 4) -> list[Document]:
@@ -53,5 +58,5 @@ class VectorStoreService:
         Returns:
             List of the k most similar Document objects.
         """
-        results = self._store.similarity_search(query, k=k)
+        results: list[Document] = self._store.similarity_search(query, k=k)
         return results

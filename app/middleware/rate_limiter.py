@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict
+from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -18,7 +19,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         requests_per_minute: Maximum number of requests allowed per IP per minute.
     """
 
-    def __init__(self, app, requests_per_minute: int = 60) -> None:
+    def __init__(self, app: Any, requests_per_minute: int = 60) -> None:
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self.window_seconds = 60

@@ -8,6 +8,9 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.middleware.error_handler import ErrorHandlerMiddleware
+from app.middleware.rate_limiter import RateLimiterMiddleware
+from app.middleware.request_logger import RequestLoggerMiddleware
 from app.models.schemas import HealthResponse, IngestResponse, QueryRequest, QueryResponse
 from app.services.document_loader import load_document
 from app.services.rag_chain import RAGService
@@ -46,17 +49,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="RAG Pipeline API",
     description="Retrieval-Augmented Generation API powered by LangChain, ChromaDB, and OpenAI.",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
+# NOTE: wildcard origins cannot be combined with credentials — keep
+# allow_credentials=False while allowing all origins for local demo use.
+# Set explicit origins via reverse proxy in production.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestLoggerMiddleware)
+app.add_middleware(ErrorHandlerMiddleware)
+# Rate limit is enforced from settings at request time via app.state;
+# default 60/min keeps the middleware stateless at import time.
+app.add_middleware(RateLimiterMiddleware, requests_per_minute=60)
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -85,22 +96,33 @@ async def ingest_document(file: UploadFile) -> IngestResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
-    extension = os.path.splitext(file.filename)[1].lower()
+    # Sanitize filename to prevent path traversal in metadata/logs.
+    safe_filename = os.path.basename(file.filename)
+    extension = os.path.splitext(safe_filename)[1].lower()
     if extension not in ALLOWED_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{extension}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+            detail=f"Unsupported file type '{extension}'. Allowed: {allowed}",
         )
 
     tmp_path: str | None = None
     try:
+        content = await file.read()
+        settings = get_settings()
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        if len(content) > settings.MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(f"File too large: {len(content)} bytes > {settings.MAX_UPLOAD_BYTES} max."),
+            )
         # Save uploaded file to a temp location preserving extension
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=extension,
             dir=None,
         ) as tmp_file:
-            content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
@@ -116,18 +138,18 @@ async def ingest_document(file: UploadFile) -> IngestResponse:
 
         # Override source metadata with original filename
         for chunk in chunks:
-            chunk.metadata["source"] = file.filename
+            chunk.metadata["source"] = safe_filename
             if "page" in chunk.metadata:
-                page_num = chunk.metadata["page"] + 1
-                chunk.metadata["source_detail"] = f"{file.filename} (page {page_num})"
+                page_num = int(chunk.metadata["page"]) + 1
+                chunk.metadata["source_detail"] = f"{safe_filename} (page {page_num})"
             else:
-                chunk.metadata["source_detail"] = file.filename
+                chunk.metadata["source_detail"] = safe_filename
 
         vector_store: VectorStoreService = app.state.vector_store
         vector_store.add_documents(chunks)
 
         return IngestResponse(
-            message=f"Successfully ingested {file.filename}",
+            message=f"Successfully ingested {safe_filename}",
             chunks_created=len(chunks),
         )
 
@@ -162,9 +184,13 @@ async def query_documents(request: QueryRequest) -> QueryResponse:
             question=request.question,
             k=request.k,
         )
+        answer = result["answer"]
+        sources = result["sources"]
+        if not isinstance(answer, str) or not isinstance(sources, list):
+            raise ValueError("Invalid RAG service response shape.")
         return QueryResponse(
-            answer=result["answer"],
-            sources=result["sources"],
+            answer=answer,
+            sources=[str(s) for s in sources],
         )
     except Exception as exc:
         raise HTTPException(

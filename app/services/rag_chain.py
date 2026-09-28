@@ -1,4 +1,6 @@
-from langchain.chains import RetrievalQA
+from typing import Any
+
+from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
@@ -22,8 +24,9 @@ class RAGService:
     """
     Retrieval-Augmented Generation service.
 
-    Combines a vector store retriever with an LLM to answer questions
-    grounded in the ingested document corpus.
+    LCEL-style pipeline (langchain>=1.x): retrieve top-k chunks via the
+    vector store, render them into a grounded prompt, and call the LLM.
+    Replaces the removed ``langchain.chains.RetrievalQA`` API.
     """
 
     def __init__(
@@ -38,34 +41,23 @@ class RAGService:
             openai_api_key=settings.OPENAI_API_KEY,
             temperature=0,
         )
-        self._prompt = PromptTemplate(
+        self._prompt: PromptTemplate = PromptTemplate(
             template=RAG_PROMPT_TEMPLATE,
             input_variables=["context", "question"],
         )
 
-    def _build_chain(self, k: int) -> RetrievalQA:
-        """
-        Build a RetrievalQA chain with the specified number of retrieved docs.
+    def _format_sources(self, docs: list[Document]) -> list[str]:
+        sources: list[str] = []
+        seen: set[str] = set()
+        for doc in docs:
+            fallback = str(doc.metadata.get("source", "Unknown"))
+            source_ref = str(doc.metadata.get("source_detail", fallback))
+            if source_ref not in seen:
+                sources.append(source_ref)
+                seen.add(source_ref)
+        return sources
 
-        Args:
-            k: Number of documents to retrieve for context.
-
-        Returns:
-            A configured RetrievalQA chain instance.
-        """
-        retriever = self._vector_store_service.retriever
-        retriever.search_kwargs = {"k": k}
-
-        chain = RetrievalQA.from_chain_type(
-            llm=self._llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": self._prompt},
-        )
-        return chain
-
-    async def query(self, question: str, k: int = 4) -> dict:
+    async def query(self, question: str, k: int = 4) -> dict[str, Any]:
         """
         Query the RAG pipeline with a question.
 
@@ -79,19 +71,13 @@ class RAGService:
         Returns:
             A dict with 'answer' (str) and 'sources' (list[str]).
         """
-        chain = self._build_chain(k=k)
-        result = await chain.ainvoke({"query": question})
-
-        source_docs = result.get("source_documents", [])
-        sources: list[str] = []
-        seen: set[str] = set()
-        for doc in source_docs:
-            source_ref = doc.metadata.get("source_detail", doc.metadata.get("source", "Unknown"))
-            if source_ref not in seen:
-                sources.append(source_ref)
-                seen.add(source_ref)
-
+        docs: list[Document] = self._vector_store_service.similarity_search(question, k=k)
+        context = "\n\n".join(doc.page_content for doc in docs)
+        prompt_text: str = self._prompt.format(context=context, question=question)
+        response = await self._llm.ainvoke(prompt_text)
+        content = response.content
+        answer = content if isinstance(content, str) else str(content)
         return {
-            "answer": result["result"],
-            "sources": sources,
+            "answer": answer,
+            "sources": self._format_sources(docs),
         }

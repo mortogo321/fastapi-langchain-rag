@@ -1,13 +1,15 @@
-fastapi>=0.115
-uvicorn[standard]>=0.34
-# Pinned below 1.0: the RAG chain in app/services/rag_chain.py uses the
-# legacy langchain.chains.RetrievalQA API, which was removed in langchain 1.0.
-langchain>=0.3,<0.4
-langchain-openai>=0.3,<0.4
-langchain-community>=0.3,<0.4
-langchain-chroma>=0.2,<1.0
-chromadb>=0.5,<1.0
-chainlit>=2.0
-python-multipart
-pypdf
-pydantic-settings
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+langchain==1.4.3
+langchain-openai==1.6.6
+langchain-community==0.4.2
+langchain-chroma==1.1.0
+langchain-core==1.6.5
+langchain-text-splitters==1.1.2
+chromadb==1.5.9
+chainlit==2.12.0
+python-multipart==0.0.32
+pypdf==6.19.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+anyio==4.15.1

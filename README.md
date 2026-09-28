@@ -1,6 +1,11 @@
 # FastAPI + LangChain RAG Pipeline with Chainlit Chat UI
 
-A production-ready Retrieval-Augmented Generation (RAG) system combining FastAPI for the API layer, LangChain for the orchestration pipeline, ChromaDB for vector storage, and Chainlit for an interactive chat interface.
+[![CI](https://github.com/mortogo321/fastapi-langchain-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/mortogo321/fastapi-langchain-rag/actions/workflows/ci.yml)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
+[![LangChain 1.x](https://img.shields.io/badge/langchain-1.x-green.svg)](https://www.langchain.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A production-ready Retrieval-Augmented Generation (RAG) system combining FastAPI for the API layer, LangChain 1.x (LCEL-style, no legacy RetrievalQA) for the orchestration pipeline, ChromaDB for vector storage, and Chainlit for an interactive chat interface.
 
 ## Architecture
 
@@ -47,8 +52,9 @@ RAG is the right choice when you need **up-to-date, verifiable, source-cited ans
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.13 (3.12+ supported, `>=3.12,<3.14`)
 - OpenAI API key
+- Docker (optional, for container run)
 
 ### Local Development
 
@@ -58,15 +64,18 @@ git clone git@github.com:mortogo321/fastapi-langchain-rag.git
 cd fastapi-langchain-rag
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+python3.13 -m venv .venv
+source .venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 
 # Configure environment
 cp .env.example .env
 # Edit .env and set your OPENAI_API_KEY
+
+# Quality gates
+make check  # ruff + mypy strict + 17 pytest
 
 # Run FastAPI server
 uvicorn app.main:app --reload --port 8000
@@ -153,8 +162,13 @@ curl http://localhost:8000/api/health
 .
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI application with async lifespan
-│   ├── config.py               # Pydantic settings configuration
+│   ├── main.py                 # FastAPI app (lifespan, CORS, middleware, upload guards)
+│   ├── config.py               # Pydantic-settings config (cached)
+│   ├── middleware/             # Error handler, rate limiter, request logger
+│   │   ├── __init__.py
+│   │   ├── error_handler.py
+│   │   ├── rate_limiter.py
+│   │   └── request_logger.py
 │   ├── models/
 │   │   ├── __init__.py
 │   │   └── schemas.py          # Request/response Pydantic models
@@ -163,28 +177,53 @@ curl http://localhost:8000/api/health
 │       ├── document_loader.py  # PDF and text file loading
 │       ├── text_splitter.py    # Recursive character text splitting
 │       ├── vector_store.py     # ChromaDB vector store operations
-│       └── rag_chain.py        # LangChain RetrievalQA chain
+│       └── rag_chain.py        # LCEL RAG service (retrieve → prompt → LLM)
+├── tests/                      # pytest suite (17 tests: API, splitter, store, RAG, security)
 ├── chainlit_app.py             # Chainlit interactive chat UI
 ├── chainlit.md                 # Chainlit welcome message
-├── Dockerfile                  # Multi-stage Docker build
+├── Dockerfile                  # Pinned Python 3.13 multi-stage, non-root, HEALTHCHECK
 ├── docker-compose.yml          # API + Chainlit orchestration
-├── requirements.txt            # Python dependencies
+├── pyproject.toml              # PEP 621 packaging + ruff + mypy strict + pytest
+├── requirements.txt            # Pinned runtime deps (mirrors pyproject)
+├── requirements-dev.txt        # Pinned dev deps
+├── Makefile                    # lint / test / typecheck / build shortcuts
+├── .dockerignore
 ├── .env.example                # Environment variable template
-└── .gitignore
+└── .github/workflows/ci.yml    # Split lint + test + docker CI
+```
+
+## Development
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+
+make check   # ruff + mypy strict + pytest
+make build   # docker build
 ```
 
 ## Configuration
 
 All settings are managed via environment variables (see `.env.example`):
 
-| Variable           | Default         | Description                        |
-|--------------------|-----------------|------------------------------------|
-| `OPENAI_API_KEY`   | (required)      | OpenAI API key for embeddings/LLM  |
-| `CHROMA_DB_PATH`   | `./chroma_db`   | ChromaDB persistence directory     |
-| `CHUNK_SIZE`       | `1000`          | Characters per text chunk          |
-| `CHUNK_OVERLAP`    | `200`           | Overlap between consecutive chunks |
-| `MODEL_NAME`       | `gpt-4o-mini`   | OpenAI model for answer generation |
+| Variable                 | Default         | Description                        |
+|--------------------------|-----------------|------------------------------------|
+| `OPENAI_API_KEY`         | (required)      | OpenAI API key for embeddings/LLM  |
+| `CHROMA_DB_PATH`         | `./chroma_db`   | ChromaDB persistence directory     |
+| `CHUNK_SIZE`             | `1000`          | Characters per text chunk          |
+| `CHUNK_OVERLAP`          | `200`           | Overlap between consecutive chunks |
+| `MODEL_NAME`             | `gpt-4o-mini`   | OpenAI model for answer generation |
+| `MAX_UPLOAD_BYTES`       | `10485760`      | Max ingest upload size (10 MB)     |
+| `RATE_LIMIT_PER_MINUTE`  | `60`            | Per-IP request budget              |
+
+## Security notes
+
+- Filenames are sanitized to basename (path-traversal safe); only `.pdf`/`.txt` accepted.
+- Uploads rejected when empty or over `MAX_UPLOAD_BYTES` (413).
+- CORS uses wildcard origins with `allow_credentials=False` (valid combo); tighten origins behind a reverse proxy in production.
+- In-memory per-IP rate limiter (60/min default), structured request logging, and JSON error handler are wired in `app/main.py`.
+- Non-root `appuser` Docker runtime with `HEALTHCHECK` on `/api/health`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

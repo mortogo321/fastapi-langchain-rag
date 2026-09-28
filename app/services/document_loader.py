@@ -42,14 +42,17 @@ async def load_document(file_path: str) -> list[Document]:
     loader = loader_class(str(path))
 
     # PyPDFLoader and TextLoader both support lazy_load
-    documents = loader.load()
+    loaded: list[Document] = loader.load()
 
     # Ensure source metadata is set to the filename (not full path)
-    for doc in documents:
+    for doc in loaded:
         doc.metadata["source"] = path.name
         if "page" in doc.metadata:
-            doc.metadata["source_detail"] = f"{path.name} (page {doc.metadata['page'] + 1})"
+            page_no = doc.metadata["page"]
+            page_int = page_no + 1 if isinstance(page_no, int) else page_no
+            doc.metadata["source_detail"] = f"{path.name} (page {page_int})"
         else:
             doc.metadata["source_detail"] = path.name
 
+    documents: list[Document] = loaded
     return documents
