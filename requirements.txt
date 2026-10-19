@@ -11,5 +11,5 @@ chainlit==2.12.0
 python-multipart==0.0.32
 pypdf==6.19.0
 pydantic==2.13.5
-pydantic-settings==2.15.0
+pydantic-settings==2.16.0
 anyio==4.15.1
